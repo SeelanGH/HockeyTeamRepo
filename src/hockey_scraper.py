@@ -5,22 +5,30 @@ import json
 import time
 from pathlib import Path
 
+# =========================
+# CONFIG
+# =========================
 BASE_URL = "https://www.scrapethissite.com/pages/forms/"
-OUTPUT_DIR = Path("C:\Users\Seelan\HockeyTeamRepo\outputs")
-OUTPUT_DIR.mkdir(exist_ok=True)
-
 TIMEOUT = 10
-DELAY = 1  # polite scraping
-SESSION_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; HockeyScraper/1.0)"
+DELAY = 1
+SEARCH_TERM = None  # set to "Boston" later if needed
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
 
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
+OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+# =========================
+# SCRAPER
+# =========================
 def scrape_hockey_teams(search_query=None):
     session = requests.Session()
-    session.headers.update(SESSION_HEADERS)
+    session.headers.update(HEADERS)
 
-    all_results = []
+    results = []
     page = 1
 
     while True:
@@ -28,23 +36,32 @@ def scrape_hockey_teams(search_query=None):
         if search_query:
             params["team"] = search_query
 
-        try:
-            response = session.get(BASE_URL, params=params, timeout=TIMEOUT)
-            response.raise_for_status()
-        except requests.RequestException as e:
-            print(f"Request failed on page {page}: {e}")
-            break
+        response = session.get(BASE_URL, params=params, timeout=TIMEOUT)
+        response.raise_for_status()
+
+        print(f"Fetching page {page}")
 
         soup = BeautifulSoup(response.text, "html.parser")
-        rows = soup.select("table.table tbody tr")
+
+        table = soup.find("table", class_="table")
+        if not table:
+            print("No table found — stopping")
+            break
+
+        # ✅ FIX: do NOT use tbody
+        rows = table.find_all("tr")[1:]  # skip header row
 
         if not rows:
-            break  # No more pages
+            print("No rows found — stopping")
+            break
 
         for row in rows:
-            cols = [c.get_text(strip=True) for c in row.find_all("td")]
+            cols = [td.get_text(strip=True) for td in row.find_all("td")]
 
-            team_data = {
+            if len(cols) < 9:
+                continue
+
+            results.append({
                 "Team Name": cols[0],
                 "Year": cols[1],
                 "Wins": cols[2],
@@ -54,43 +71,46 @@ def scrape_hockey_teams(search_query=None):
                 "Goals For (GF)": cols[6],
                 "Goals Against (GA)": cols[7],
                 "+ / -": cols[8],
-            }
+            })
 
-            all_results.append(team_data)
-
-        print(f"Scraped page {page} ({len(rows)} rows)")
+        print(f"Scraped {len(rows)} rows")
         page += 1
         time.sleep(DELAY)
 
-    return all_results
+    return results
 
 
-def save_csv(data, filename):
-    if not data:
-        return
-
-    with open(filename, "w", newline="", encoding="utf-8") as f:
+# =========================
+# SAVE
+# =========================
+def save_csv(data, path):
+    with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=data[0].keys())
         writer.writeheader()
         writer.writerows(data)
 
 
-def save_json(data, filename):
-    with open(filename, "w", encoding="utf-8") as f:
+def save_json(data, path):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
+# =========================
+# MAIN
+# =========================
 def main():
-    # 🔍 Search query (can be None or e.g. "Boston")
-    SEARCH_TERM = "Boston"  # change or set to None
+    data = scrape_hockey_teams(SEARCH_TERM)
 
-    results = scrape_hockey_teams(search_query=SEARCH_TERM)
+    if not data:
+        print("❌ No data scraped")
+        return
 
-    save_csv(results, OUTPUT_DIR / "hockey_teams.csv")
-    save_json(results, OUTPUT_DIR / "hockey_teams.json")
+    save_csv(data, OUTPUT_DIR / "hockey_teams.csv")
+    save_json(data, OUTPUT_DIR / "hockey_teams.json")
 
-    print(f"\nCompleted: {len(results)} records saved.")
+    print(f"\n✅ DONE — {len(data)} records saved")
 
 
 if __name__ == "__main__":
     main()
+
